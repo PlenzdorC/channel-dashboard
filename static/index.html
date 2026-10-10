@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kanal-Dashboard</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">▶</span>Kanal-Dashboard</div>
+      <nav class="nav" aria-label="Bereiche" id="nav"></nav>
+      <div class="demo-badge hidden" id="demo-badge">Demo-Modus: Alle Zahlen sind erfunden, Uploads werden nur simuliert.</div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <h1 id="page-title">Kanal-Dashboard</h1>
+        <div class="filters" id="filters"></div>
+        <span class="sync-info" id="sync-info"></span>
+        <button class="btn" id="sync-btn" type="button"></button>
+      </header>
+      <div id="view" aria-live="polite"></div>
+    </main>
+  </div>
+</body>
+</html>
