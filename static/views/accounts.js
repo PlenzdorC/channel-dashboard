@@ -3,6 +3,10 @@
 import { app } from "../app.js";
 import { api, avatar, esc, fmt, nicheLabel, platformIcon, PLATFORMS, toast } from "../util.js";
 
+// Opened from another device (home server): logins come back to 127.0.0.1 of this device, where nothing answers.
+const REMOTE = !["127.0.0.1", "localhost"].includes(location.hostname);
+const LOGIN_TARGET = REMOTE ? ' target="_blank" rel="noopener"' : "";
+
 const SETUP = {
   youtube: (p) => `<ol>
     <li>In der <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> ein Projekt anlegen und
@@ -37,7 +41,7 @@ export async function renderAccounts(view, params) {
   if (params.has("verbunden") || params.has("fehler")) history.replaceState(null, "", "#konten");
   const meta = app.meta;
   view.innerHTML = meta.platforms.map((p) => platformCard(p, meta)).join("") +
-    `<p class="muted small" style="margin-top:16px">Die Zugangsdaten bleiben auf diesem PC (<code>dashboard/data/dashboard.db</code>). Ausführliche Anleitung: <code>dashboard/README.md</code>.</p>`;
+    `<p class="muted small" style="margin-top:16px">Die Zugangsdaten bleiben auf dem Rechner, auf dem das Dashboard läuft (<code>dashboard/data/dashboard.db</code>). Ausführliche Anleitung: <code>dashboard/README.md</code>.</p>`;
   bind(view);
 }
 
@@ -46,7 +50,7 @@ function platformCard(p, meta) {
   const ready = !p.missing.length;
   const connect = meta.demo ? '<span class="muted small">Im Demo-Modus nicht verfügbar</span>'
     : p.connect_mode === "oauth"
-      ? `<a class="btn primary ${ready ? "" : "hidden"}" href="/connect/${p.id}">+ Konto verbinden</a>`
+      ? `<a class="btn primary ${ready ? "" : "hidden"}" href="/connect/${p.id}"${LOGIN_TARGET}>+ Konto verbinden</a>`
       : "";
   const setupOpen = !accounts.length || !ready;
   return `<section class="card platform-card">
@@ -58,6 +62,12 @@ function platformCard(p, meta) {
       <select class="input" id="ig-niche" style="max-width:180px"><option value="">Nische …</option>
         ${meta.niches.map((n) => `<option value="${esc(n)}">${esc(nicheLabel(n))}</option>`).join("")}</select>
       <button class="btn primary" type="button" id="ig-connect">Verbinden</button></div>` : ""}
+    ${p.connect_mode === "oauth" && ready && REMOTE && !meta.demo ? `<p class="note">Der Login öffnet sich in einem neuen Tab und endet dort mit
+      „Seite nicht erreichbar“ und <code>127.0.0.1</code> in der Adresszeile. Die ganze Adresse kopieren und hier einfügen
+      (ein lokal gestartetes Dashboard auf diesem Gerät vorher beenden).</p>
+      <div class="token-form callback-form">
+      <input class="input" type="text" data-callback="${p.id}" placeholder="http://127.0.0.1:…/oauth/${p.id}/callback?…" autocomplete="off">
+      <button class="btn primary" type="button" data-finish="${p.id}">Login abschließen</button></div>` : ""}
     ${accounts.map((a) => accountRow(a, meta)).join("")}
   </section>`;
 }
@@ -65,7 +75,7 @@ function platformCard(p, meta) {
 function accountRow(a, meta) {
   const status = { ok: "Aktuell", warning: "Teilweise", error: "Fehler", reconnect: "Neu verbinden" }[a.status] || a.status;
   const message = a.status !== "ok" && a.status_message ? `<div class="small ${a.status === "warning" ? "muted" : "delta-down"}">${esc(a.status_message)}</div>` : "";
-  const reconnect = a.status === "reconnect" && a.platform !== "instagram" ? `<a class="btn" href="/connect/${esc(a.platform)}">Neu verbinden</a>` : "";
+  const reconnect = a.status === "reconnect" && a.platform !== "instagram" ? `<a class="btn" href="/connect/${esc(a.platform)}"${LOGIN_TARGET}>Neu verbinden</a>` : "";
   return `<div class="account-row">${avatar(a)}
     <div><div><b>${esc(a.name)}</b> <span class="muted small">${esc(a.handle || "")}</span></div>
       <div class="muted small"><span class="status-dot status-${esc(a.status)}"></span> ${esc(status)} · abgerufen ${esc(fmt.ago(a.last_sync))}</div>${message}</div>
@@ -96,6 +106,15 @@ function bind(view) {
     try {
       await api(`/api/accounts/${encodeURIComponent(btn.dataset.remove)}`, { method: "DELETE" });
       toast("Konto getrennt.");
+      app.rerender();
+    } catch (err) { toast(err.message, true); }
+  }));
+  view.querySelectorAll("[data-finish]").forEach((btn) => btn.addEventListener("click", async () => {
+    const url = view.querySelector(`[data-callback="${btn.dataset.finish}"]`).value.trim();
+    if (!url) return toast("Bitte die Adresse aus dem Login-Tab einfügen.", true);
+    try {
+      const res = await api("/api/connect/finish", { method: "POST", body: { url } });
+      toast(`Verbunden: ${res.name}. Die Zahlen werden jetzt geholt.`);
       app.rerender();
     } catch (err) { toast(err.message, true); }
   }));

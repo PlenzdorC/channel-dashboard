@@ -23,6 +23,17 @@ def test_read_env_merges_both_files_and_later_wins(tmp_path, monkeypatch):
     assert env["YOUTUBE_CLIENT_ID"] == "neu" and env["TIKTOK_CLIENT_KEY"] == "k" and env["ELEVENLABS_API_KEY"] == "a"
 
 
+def test_settings_serve_this_pc_unless_home_network_names_are_set(settings):
+    from dataclasses import replace
+    assert (settings.listen_host, settings.allowed_hosts, settings.url) == (
+        "127.0.0.1", ("127.0.0.1", "localhost"), "http://127.0.0.1:8765")
+    server = replace(settings, env={"DASHBOARD_HOSTS": " 192.168.178.138 ,homeserver.fritz.box,", "DASHBOARD_PORT": "9000"})
+    assert server.listen_host == "0.0.0.0"
+    assert server.allowed_hosts == ("127.0.0.1", "localhost", "192.168.178.138", "homeserver.fritz.box")
+    assert server.url == "http://192.168.178.138:9000"
+    assert server.redirect_base == "http://127.0.0.1:9000"
+
+
 # --- pipeline -----------------------------------------------------------------------------------
 def test_normalize_handles_umlauts_and_quotes():
     assert normalize("„Hör auf zu nicken – Das zerstört deine Verhandlung!“") == "hoer auf zu nicken das zerstoert deine verhandlung"

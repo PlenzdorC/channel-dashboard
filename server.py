@@ -1,18 +1,20 @@
 """Local web server: JSON API for the dashboard page, OAuth callbacks, render previews.
 
-Bound to 127.0.0.1 only. Host header pinned (no DNS rebinding) and every state-changing request
+Bound to 127.0.0.1, or to the home network when DASHBOARD_HOSTS is set (then optionally behind
+DASHBOARD_PASSWORD). Host header pinned (no DNS rebinding) and every state-changing request
 must be JSON, which a foreign web page cannot send without a CORS preflight this server never grants.
 """
 
+import base64
 import secrets
 import threading
 import time
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -73,6 +75,10 @@ class SlugBody(BaseModel):
     slug: str | None = None
 
 
+class CallbackBody(BaseModel):
+    url: str = Field(min_length=10, max_length=4000)
+
+
 class TokenBody(BaseModel):
     token: str = Field(min_length=20, max_length=1000)
     niche: str | None = None
@@ -98,12 +104,24 @@ class PostBody(BaseModel):
 def create_app(settings: Settings, db: Database, registry: dict[str, Connector], sync: SyncManager,
                publisher: Publisher) -> FastAPI:
     app = FastAPI(title="Kanal-Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=[*settings.allowed_hosts, "testserver"])
     logins = PendingLogins()
     niches = find_niches(settings.base)
 
+    def password_ok(request: Request) -> bool:
+        """HTTP Basic auth; the browser asks once and then sends it with every request, the user name is ignored."""
+        scheme, _, encoded = request.headers.get("authorization", "").partition(" ")
+        try:
+            given = base64.b64decode(encoded, validate=True).decode("utf-8").partition(":")[2]
+        except ValueError:
+            return False
+        return scheme.lower() == "basic" and secrets.compare_digest(given.encode(), settings.password.encode())
+
     @app.middleware("http")
     async def json_only_writes(request: Request, call_next):
+        if settings.password and not password_ok(request):
+            return PlainTextResponse("Passwort nötig", status_code=401,
+                                     headers={"WWW-Authenticate": 'Basic realm="Kanal-Dashboard", charset="UTF-8"'})
         if request.method not in ("GET", "HEAD", "OPTIONS") and \
                 not request.headers.get("content-type", "").startswith("application/json"):
             return JSONResponse({"detail": "JSON erwartet"}, status_code=415)
@@ -210,23 +228,27 @@ def create_app(settings: Settings, db: Database, registry: dict[str, Connector],
     def back_to_accounts(**message: str) -> RedirectResponse:
         return RedirectResponse(f"/#konten?{urlencode(message)}", status_code=303)
 
-    def finish_login(platform: str, request: Request):
-        params = request.query_params
+    def complete_login(platform: str, params) -> tuple[bool, str]:
+        """(True, account name) or (False, the error to show)."""
         pending = logins.take(params.get("state", ""), platform)
         if not pending:  # only a login this dashboard started may put text on the page
-            return back_to_accounts(fehler="Login abgelaufen, bitte noch einmal verbinden")
+            return False, "Login abgelaufen, bitte noch einmal verbinden"
         if params.get("error") or not params.get("code"):
             reason = (params.get("error_description") or params.get("error") or "kein Code")[:200]
-            return back_to_accounts(fehler=f"Login abgebrochen: {reason}")
+            return False, f"Login abgebrochen: {reason}"
         connector = registry[platform]
         try:
             creds = connector.exchange_code(params["code"], redirect_uri(platform), pending.verifier)
             info = connector.fetch_account(creds)
         except PlatformError as exc:
-            return back_to_accounts(fehler=str(exc))
+            return False, str(exc)
         key = db.save_account(info, creds)
         sync.start(key)
-        return back_to_accounts(verbunden=info.name)
+        return True, info.name
+
+    def finish_login(platform: str, request: Request):
+        ok, message = complete_login(platform, request.query_params)
+        return back_to_accounts(**{"verbunden" if ok else "fehler": message})
 
     @app.get("/oauth/youtube/callback")
     def youtube_callback(request: Request):
@@ -236,6 +258,19 @@ def create_app(settings: Settings, db: Database, registry: dict[str, Connector],
     @app.get("/oauth/tiktok/callback")
     def tiktok_callback(request: Request):
         return finish_login("tiktok", request)
+
+    @app.post("/api/connect/finish")
+    def finish_pasted_login(body: CallbackBody):
+        """On a home server the login comes back to 127.0.0.1 of the user's own device, where nothing answers;
+        they paste that address here instead."""
+        parts = urlsplit(body.url.strip())
+        platform = next((p for p, path in CALLBACK_PATHS.items() if parts.path.rstrip("/") == path.rstrip("/")), None)
+        if not platform:
+            raise HTTPException(400, "Das ist nicht die Adresse nach dem Login (…/oauth/…/callback?code=…)")
+        ok, message = complete_login(platform, dict(parse_qsl(parts.query)))
+        if not ok:
+            raise HTTPException(400, message)
+        return {"ok": True, "name": message}
 
     @app.post("/api/connect/instagram")
     def connect_instagram(body: TokenBody):

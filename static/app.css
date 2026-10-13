@@ -190,6 +190,7 @@ video.preview { width: 100%; max-height: 520px; border-radius: 12px; background:
 .setup code, .copy-code { background: var(--surface-3); border-radius: 6px; padding: 1px 6px; font-family: Consolas, monospace; font-size: 12.5px; }
 .token-form { display: flex; gap: 8px; flex-wrap: wrap; }
 .token-form .input { flex: 1; min-width: 240px; }
+.callback-form { margin: 8px 0 12px; }
 
 .empty { text-align: center; padding: 48px 20px; }
 .empty p { color: var(--text-2); max-width: 520px; margin: 8px auto 18px; }

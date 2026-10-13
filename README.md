@@ -1,7 +1,8 @@
 # Kanal-Dashboard
 
 Zahlen und Posting für beliebig viele YouTube-, TikTok- und Instagram-Konten an einem Ort.
-Läuft lokal auf diesem PC (`http://127.0.0.1:8765`). Logins und Zahlen bleiben in `dashboard/data/`.
+Läuft lokal auf diesem PC (`http://127.0.0.1:8765`) oder auf einem [Server im Heimnetz](#auf-einem-heimserver).
+Logins und Zahlen bleiben in `dashboard/data/`.
 
 ## Starten
 
@@ -113,6 +114,71 @@ Für App-Einstellungen, die nach Datenschutz, Nutzungsbedingungen oder Datenlös
 Windows-Aufgabenplanung → Einfache Aufgabe → täglich → Programm `C:\Projekte\Claude\short-content\.venv\Scripts\python.exe`,
 Argumente `-m dashboard sync`, Starten in `C:\Projekte\Claude\short-content`.
 
+## Auf einem Heimserver
+
+Das Dashboard kann auch auf einem kleinen Rechner zu Hause laufen (Raspberry Pi, alter Laptop, Python 3.10 oder neuer).
+Dann öffnest du es von jedem Gerät im Heimnetz, z. B. unter `http://192.168.178.138:8765`, und es holt die Zahlen rund um die Uhr selbst.
+Die Windows-Aufgabenplanung ist dann nicht mehr nötig. Von außerhalb des Heimnetzes ist es nicht erreichbar.
+
+1. **Feste Adresse:** In der FRITZ!Box unter Heimnetz → Netzwerk beim Server auf „Bearbeiten“ →
+   „Diesem Netzwerkgerät immer die gleiche IPv4-Adresse zuweisen“.
+2. **Installieren** (Beispiel Linux). Der Ordner muss `dashboard` heißen, gestartet wird aus dem Ordner darüber:
+   ```bash
+   mkdir ~/kanal && cd ~/kanal
+   git clone https://github.com/PlenzdorC/channel-dashboard.git dashboard   # oder den Ordner dashboard vom PC kopieren
+   python3 -m venv .venv
+   .venv/bin/pip install -r dashboard/requirements.txt
+   ```
+3. **`dashboard/.env`** mit den Zugangsdaten der Apps wie oben, dazu:
+   ```
+   DASHBOARD_HOSTS=192.168.178.138
+   DASHBOARD_PASSWORD=ein-eigenes-passwort
+   ```
+   `DASHBOARD_HOSTS` sind die Adressen, unter denen du den Server aufrufst (mehrere mit Komma, z. B. `192.168.178.138,heimserver.fritz.box`).
+   Ist es gesetzt, ist das Dashboard im ganzen Heimnetz erreichbar statt nur auf dem eigenen Rechner.
+   Mit `DASHBOARD_PASSWORD` fragt der Browser einmal nach dem Passwort (Benutzername egal). Ohne Passwort kann jedes Gerät im WLAN,
+   auch das von Gästen, Zahlen sehen, posten und Konten trennen. Das Passwort geht unverschlüsselt durchs Heimnetz, also kein wichtiges wiederverwenden.
+4. **Starten:** `.venv/bin/python -m dashboard` im Ordner `~/kanal`. Dauerhaft als Dienst, der mit dem Server startet
+   (`<benutzer>` ersetzen):
+   ```bash
+   sudo tee /etc/systemd/system/kanal-dashboard.service >/dev/null <<'EOF'
+   [Unit]
+   Description=Kanal-Dashboard
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   User=<benutzer>
+   WorkingDirectory=/home/<benutzer>/kanal
+   ExecStart=/home/<benutzer>/kanal/.venv/bin/python -m dashboard
+   Environment=PYTHONUNBUFFERED=1
+   Restart=on-failure
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+   sudo systemctl enable --now kanal-dashboard
+   ```
+   Meldungen: `journalctl -u kanal-dashboard -f`. Update: `cd ~/kanal/dashboard && git pull && sudo systemctl restart kanal-dashboard`.
+   Läuft auf dem Server eine Firewall, Port 8765 fürs Heimnetz freigeben (ufw: `sudo ufw allow from 192.168.178.0/24 to any port 8765 proto tcp`).
+
+**Bisherige Konten mitnehmen:** Dashboard auf PC und Server beenden, den Ordner `dashboard/data/` vom PC auf den Server kopieren.
+Konten und Verlauf sind dann sofort da. Danach nur noch das Dashboard auf dem Server benutzen: Zwei Kopien mit denselben Logins
+kommen sich beim Erneuern der Logins in die Quere.
+
+**Konten verbinden:** YouTube und TikTok schicken dich nach dem Login an `127.0.0.1` zurück, also an das Gerät, an dem du gerade sitzt.
+An den Einstellungen der Apps ändert sich deshalb nichts. Unter Konten öffnet „Konto verbinden“ den Login in einem neuen Tab, der am Ende
+„Seite nicht erreichbar“ zeigt. Die Adresse aus dessen Adresszeile (`http://127.0.0.1:8765/oauth/…?code=…`) kopieren, im Dashboard-Tab
+in das Feld unter der Plattform einfügen und „Login abschließen“ klicken, innerhalb von 10 Minuten. Läuft auf dem Gerät noch das lokale
+Dashboard, vorher beenden, sonst fängt es den Login ab. Instagram geht wie gewohnt per Token.
+
+**Shorts und Posten** brauchen die fertigen Videos (`<nische>/<N. slug>/renders/`). Entstehen die auf dem PC, den Ordner `short-content`
+auf den Server spiegeln (z. B. mit Syncthing) oder als Netzlaufwerk einbinden und in `.env` angeben:
+```
+DASHBOARD_SHORT_CONTENT=/home/<benutzer>/short-content
+```
+Die Nischen liest das Dashboard beim Start aus diesem Ordner. Übersicht, Videos und Konten funktionieren auch ohne ihn.
+
 ## Technik
 
 ```text
@@ -133,6 +199,7 @@ dashboard/
 
 Tests: `.venv\Scripts\python -m pytest dashboard\tests -q`
 
-Sicherheit: Der Server hört nur auf 127.0.0.1, akzeptiert nur die Hosts `127.0.0.1`/`localhost` und schreibende Anfragen nur als JSON
-(fremde Webseiten können so nichts auslösen). Die Vorschau und das Posten erlauben nur Dateien aus `renders/`.
+Sicherheit: Der Server hört nur auf 127.0.0.1 (mit `DASHBOARD_HOSTS` im Heimnetz), akzeptiert nur die Hosts `127.0.0.1`/`localhost`
+und die in `DASHBOARD_HOSTS` und schreibende Anfragen nur als JSON (fremde Webseiten können so nichts auslösen). Mit `DASHBOARD_PASSWORD`
+verlangt er für jede Anfrage das Passwort. Die Vorschau und das Posten erlauben nur Dateien aus `renders/`.
 Tokens stehen unverschlüsselt in `dashboard/data/dashboard.db`; den Ordner nicht teilen oder hochladen.
